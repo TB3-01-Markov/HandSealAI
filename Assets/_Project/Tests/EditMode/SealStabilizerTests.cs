@@ -114,6 +114,60 @@ namespace HandSeals.Core.Tests
         }
 
         [Test]
+        public void OneFrameMisread_DoesNotResetTheHold()
+        {
+            _stabilizer.Update(SealType.Tiger, 0.9f, 0.0);
+            _stabilizer.Update(SealType.Tiger, 0.9f, 0.2);
+            _stabilizer.Update(SealType.Bird, 0.9f, 0.25);
+            Assert.AreEqual(SealType.Tiger, _stabilizer.Candidate);
+            _stabilizer.Update(SealType.Tiger, 0.9f, 0.3);
+            _stabilizer.Update(SealType.Tiger, 0.9f, 0.4);
+
+            Assert.AreEqual(1, _confirmed.Count);
+            Assert.AreEqual(SealType.Tiger, _confirmed[0]);
+        }
+
+        [Test]
+        public void Misread_DoesNotConfirmTheOldSeal_WhileItIsOutOfSight()
+        {
+            _stabilizer.Update(SealType.Tiger, 0.9f, 0.0);
+            _stabilizer.Update(SealType.Tiger, 0.9f, 0.3);
+            // The hold time passes while the model already reports another seal.
+            _stabilizer.Update(SealType.Bird, 0.9f, 0.42);
+
+            Assert.AreEqual(0, _confirmed.Count);
+        }
+
+        [Test]
+        public void NewSeal_HoldCountsFromItsFirstSighting()
+        {
+            _stabilizer.Update(SealType.Rat, 0.9f, 0.0);
+            _stabilizer.Update(SealType.Boar, 0.9f, 0.1);
+            _stabilizer.Update(SealType.Boar, 0.9f, 0.2);
+            Assert.AreEqual(SealType.Boar, _stabilizer.Candidate);
+            _stabilizer.Update(SealType.Boar, 0.9f, 0.45);
+            Assert.AreEqual(0, _confirmed.Count);
+
+            _stabilizer.Update(SealType.Boar, 0.9f, 0.5);
+            Assert.AreEqual(1, _confirmed.Count);
+            Assert.AreEqual(SealType.Boar, _confirmed[0]);
+        }
+
+        [Test]
+        public void TwoSealsInARow_AreBothConfirmed_WithoutReleasingTheHands()
+        {
+            _stabilizer.Update(SealType.Ox, 0.9f, 0.0);
+            _stabilizer.Update(SealType.Ox, 0.9f, 0.4);
+            _stabilizer.Update(SealType.Tiger, 0.9f, 0.5);
+            _stabilizer.Update(SealType.Tiger, 0.9f, 0.7);
+            _stabilizer.Update(SealType.Tiger, 0.9f, 0.9);
+
+            Assert.AreEqual(2, _confirmed.Count);
+            Assert.AreEqual(SealType.Ox, _confirmed[0]);
+            Assert.AreEqual(SealType.Tiger, _confirmed[1]);
+        }
+
+        [Test]
         public void HoldProgress_GrowsFromZeroToOne()
         {
             Assert.AreEqual(0.0, _stabilizer.GetHoldProgress(0.0), 1e-9);

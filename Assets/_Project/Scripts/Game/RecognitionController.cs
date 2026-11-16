@@ -15,6 +15,7 @@ namespace HandSeals.Game
         private CameraFeed _camera;
         private SentisYoloxDetector _detector;
         private Color32[] _modelInputPixels;
+        private bool _paused;
 
         public SealStabilizer Stabilizer { get; } = new SealStabilizer();
 
@@ -36,6 +37,21 @@ namespace HandSeals.Game
         public bool CaptureModelInput { get; set; }
 
         public Texture2D ModelInputTexture { get; private set; }
+
+        /// <summary>While paused no frames go to the model (used in the menu to save battery).</summary>
+        public bool Paused
+        {
+            get { return _paused; }
+            set
+            {
+                _paused = value;
+                if (value)
+                {
+                    Best = null;
+                    Stabilizer.Reset();
+                }
+            }
+        }
 
         public event Action<SealType> SealConfirmed
         {
@@ -63,7 +79,7 @@ namespace HandSeals.Game
 
         private void Update()
         {
-            if (_detector == null || _camera == null || _detector.IsBusy || !_camera.DidUpdateThisFrame)
+            if (_paused || _detector == null || _camera == null || _detector.IsBusy || !_camera.DidUpdateThisFrame)
             {
                 return;
             }
@@ -85,9 +101,9 @@ namespace HandSeals.Game
                     _camera.RotationAngle,
                     !_camera.VerticallyMirrored);
 
-                if (this == null || _detector == null)
+                if (this == null || _detector == null || _paused)
                 {
-                    // Destroyed while the model was running.
+                    // Destroyed or paused while the model was running: the result is stale.
                     return;
                 }
 

@@ -24,6 +24,16 @@ namespace HandSeals.Core
         Mizunoe = 15
     }
 
+    public static class SealSets
+    {
+        /// <summary>The twelve zodiac seals, in their traditional order.</summary>
+        public static readonly System.Collections.Generic.IReadOnlyList<SealType> Zodiac = new[]
+        {
+            SealType.Rat, SealType.Ox, SealType.Tiger, SealType.Hare, SealType.Dragon, SealType.Snake,
+            SealType.Horse, SealType.Ram, SealType.Monkey, SealType.Bird, SealType.Dog, SealType.Boar
+        };
+    }
+
     public static class SealTypeExtensions
     {
         /// <summary>True for a real seal; false for "nothing detected" and "unknown gesture".</summary>

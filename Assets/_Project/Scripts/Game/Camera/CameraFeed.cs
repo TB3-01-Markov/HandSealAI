@@ -70,14 +70,14 @@ namespace HandSeals.Game
         private void Start()
         {
             _started = true;
-            Restart();
+            Restart(true);
         }
 
         private void OnEnable()
         {
             if (_started)
             {
-                Restart();
+                Restart(true);
             }
         }
 
@@ -86,13 +86,33 @@ namespace HandSeals.Game
             StopCamera();
         }
 
+        /// <summary>Shows the system permission dialog again; for an "Allow camera" button.</summary>
+        public void RequestPermission()
+        {
+            if (isActiveAndEnabled && State == CameraFeedState.PermissionDenied)
+            {
+                Restart(true);
+            }
+        }
+
         private void OnApplicationFocus(bool hasFocus)
         {
             // The player may have granted the permission in the system settings and come back.
-            if (hasFocus && isActiveAndEnabled && State == CameraFeedState.PermissionDenied)
+            // Only check, never ask here: closing the permission dialog also returns focus,
+            // and asking again would trap a player who said no in an endless dialog.
+            if (hasFocus && isActiveAndEnabled && State == CameraFeedState.PermissionDenied && IsAuthorized())
             {
-                Restart();
+                Restart(false);
             }
+        }
+
+        private static bool IsAuthorized()
+        {
+#if UNITY_ANDROID && !UNITY_EDITOR
+            return Permission.HasUserAuthorizedPermission(Permission.Camera);
+#else
+            return Application.HasUserAuthorization(UserAuthorization.WebCam);
+#endif
         }
 
         private void OnApplicationPause(bool paused)
@@ -112,11 +132,11 @@ namespace HandSeals.Game
             }
         }
 
-        private void Restart()
+        private void Restart(bool askPermission)
         {
             StopCamera();
             State = CameraFeedState.Starting;
-            _startRoutine = StartCoroutine(StartCamera());
+            _startRoutine = StartCoroutine(StartCamera(askPermission));
         }
 
         private void StopCamera()
@@ -135,28 +155,33 @@ namespace HandSeals.Game
             }
         }
 
-        private IEnumerator StartCamera()
+        private IEnumerator StartCamera(bool askPermission)
         {
 #if UNITY_ANDROID && !UNITY_EDITOR
-            if (!Permission.HasUserAuthorizedPermission(Permission.Camera))
+            if (askPermission && !IsAuthorized())
             {
-                Permission.RequestUserPermission(Permission.Camera);
+                // The callbacks report a refusal at once; without them a "no" would only show after the timeout.
+                bool answered = false;
+                var callbacks = new PermissionCallbacks();
+                callbacks.PermissionGranted += _ => answered = true;
+                callbacks.PermissionDenied += _ => answered = true;
+                Permission.RequestUserPermission(Permission.Camera, callbacks);
 
                 float waited = 0f;
-                while (!Permission.HasUserAuthorizedPermission(Permission.Camera) && waited < PermissionTimeoutSeconds)
+                while (!answered && !IsAuthorized() && waited < PermissionTimeoutSeconds)
                 {
                     waited += Time.unscaledDeltaTime;
                     yield return null;
                 }
             }
-
-            bool authorized = Permission.HasUserAuthorizedPermission(Permission.Camera);
 #else
-            yield return Application.RequestUserAuthorization(UserAuthorization.WebCam);
-            bool authorized = Application.HasUserAuthorization(UserAuthorization.WebCam);
+            if (askPermission && !IsAuthorized())
+            {
+                yield return Application.RequestUserAuthorization(UserAuthorization.WebCam);
+            }
 #endif
 
-            if (!authorized)
+            if (!IsAuthorized())
             {
                 State = CameraFeedState.PermissionDenied;
                 _startRoutine = null;

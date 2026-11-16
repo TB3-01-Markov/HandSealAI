@@ -175,6 +175,25 @@ namespace HandSeals.Core.Tests
             Assert.AreEqual(Pad, Red(preprocessor, 2, 3), 1e-6f);
         }
 
+        // Typical camera resolutions: the longer side must fill the model input exactly.
+        [TestCase(640, 480, 0, 416, 312)]
+        [TestCase(640, 480, 90, 312, 416)]
+        [TestCase(640, 480, 270, 312, 416)]
+        [TestCase(1280, 720, 0, 416, 234)]
+        [TestCase(1280, 720, 90, 234, 416)]
+        [TestCase(1920, 1080, 270, 234, 416)]
+        [TestCase(320, 240, 0, 416, 312)]
+        [TestCase(480, 480, 0, 416, 416)]
+        public void CameraFrames_FillTheLongerSideExactly(int width, int height, int rotation, int scaledWidth, int scaledHeight)
+        {
+            var preprocessor = new LetterboxPreprocessor(416);
+
+            LetterboxInfo info = preprocessor.Fill(new byte[width * height * 4], width, height, rotation, true);
+
+            Assert.AreEqual(scaledWidth, info.ScaledWidth);
+            Assert.AreEqual(scaledHeight, info.ScaledHeight);
+        }
+
         [Test]
         public void Downscaling_AveragesNeighbouringPixels()
         {

@@ -6,15 +6,21 @@ using UnityEngine.UI;
 namespace HandSeals.Game
 {
     /// <summary>
-    /// The whole screen: mirrored camera preview with the detection box, the current jutsu and its sequence,
-    /// the recognised seal with a hold bar, and a status line. Built from code, so no prefabs are needed.
+    /// Everything on screen, built from code so that no prefabs are needed: the mirrored camera preview with
+    /// the detection box, the main menu, and the play screen shared by the training and the technique mode
+    /// (task at the top, recognised seal with a hold bar at the bottom).
     /// </summary>
     public sealed class HudView : MonoBehaviour
     {
         private const float FeedbackSeconds = 0.5f;
+        private const float TrainingFeedbackSeconds = 0.9f;
+        private const float StatusInterval = 0.25f;
         private const float BoxThickness = 6f;
+        private const int NoKey = int.MinValue;
 
         private static readonly Color PanelColor = new Color(0f, 0f, 0f, 0.6f);
+        private static readonly Color PanelGoodColor = new Color(0.06f, 0.4f, 0.2f, 0.8f);
+        private static readonly Color PanelBadColor = new Color(0.55f, 0.08f, 0.08f, 0.8f);
         private static readonly Color GoodColor = new Color(0.43f, 0.91f, 0.63f);
         private static readonly Color BadColor = new Color(0.96f, 0.42f, 0.42f);
         private static readonly Color MutedColor = new Color(0.62f, 0.62f, 0.62f);
@@ -23,11 +29,23 @@ namespace HandSeals.Game
         private RecognitionController _recognition;
         private GameController _game;
 
+        // Preview
         private RectTransform _previewArea;
         private RectTransform _mirrorRoot;
         private RawImage _preview;
         private RectTransform _box;
         private Image[] _boxEdges;
+        private float _previewScale = 1f;
+
+        // Screens
+        private RectTransform _safeRoot;
+        private GameObject _dim;
+        private GameObject _playRoot;
+        private GameObject _skipButton;
+        private GameObject _allowCameraButton;
+        private MenuPanel _menu;
+
+        // Play screen
         private Image _topPanel;
         private Text _title;
         private Text _timer;
@@ -39,9 +57,24 @@ namespace HandSeals.Game
         private Text _status;
         private RawImage _modelInput;
 
+        // What is currently shown, so that strings are rebuilt only when something changed.
         private readonly StringBuilder _builder = new StringBuilder(256);
-        private float _previewScale = 1f;
-        private int _sequenceSignature = -1;
+        private GameMode? _shownMode;
+        private Jutsu _shownJutsu;
+        private int _shownState = NoKey;
+        private int _shownProgress = NoKey;
+        private int _shownTarget = NoKey;
+        private int _shownCorrect = NoKey;
+        private int _timerKey = NoKey;
+        private int _messageKey = NoKey;
+        private int _sealKey = NoKey;
+        private float _nextStatusTime;
+        private float _safeX = -1f;
+        private float _safeY = -1f;
+        private float _safeWidth = -1f;
+        private float _safeHeight = -1f;
+        private int _screenWidth;
+        private int _screenHeight;
 
         public void Initialize(CameraFeed cameraFeed, RecognitionController recognition, GameController game, bool showModelInput)
         {
@@ -50,7 +83,12 @@ namespace HandSeals.Game
             _game = game;
             _recognition.CaptureModelInput = showModelInput;
 
+            UiInput.EnsureEventSystem();
             Build(showModelInput);
+
+            _menu.TrainingClicked += _game.StartTraining;
+            _menu.PlayAllClicked += () => _game.StartChallenge(0, true);
+            _menu.TechniqueClicked += index => _game.StartChallenge(index, false);
         }
 
         private void Update()
@@ -60,9 +98,42 @@ namespace HandSeals.Game
                 return;
             }
 
+            ApplySafeArea();
+
+            if (UiInput.BackPressed())
+            {
+                if (_game.Mode == GameMode.Menu)
+                {
+                    Application.Quit();
+                }
+                else
+                {
+                    _game.OpenMenu();
+                }
+            }
+
+            SyncMode();
             UpdatePreview();
+
+            if (_game.Mode == GameMode.Menu)
+            {
+                return;
+            }
+
             UpdateRecognition();
-            UpdateGame();
+
+            if (!ShowProblem())
+            {
+                if (_game.Mode == GameMode.Training)
+                {
+                    UpdateTraining();
+                }
+                else
+                {
+                    UpdateChallenge();
+                }
+            }
+
             UpdateStatus();
         }
 
@@ -81,6 +152,9 @@ namespace HandSeals.Game
             scaler.referenceResolution = new Vector2(1080f, 1920f);
             scaler.screenMatchMode = CanvasScaler.ScreenMatchMode.MatchWidthOrHeight;
             scaler.matchWidthOrHeight = 0.5f;
+
+            // Without a raycaster the buttons would never receive taps.
+            canvasObject.AddComponent<GraphicRaycaster>();
 
             Transform root = canvasObject.transform;
 
@@ -106,27 +180,66 @@ namespace HandSeals.Game
             };
             _box.gameObject.SetActive(false);
 
-            // Top panel: jutsu name, timer and the seal sequence.
-            RectTransform top = UiFactory.CreateRect("TopPanel", root, new Vector2(0f, 0.82f), Vector2.one);
+            // Darkens the preview behind the menu.
+            RectTransform dim = UiFactory.CreateRect("Dim", root, Vector2.zero, Vector2.one);
+            UiFactory.AddImage(dim, new Color(0f, 0f, 0f, 0.72f));
+            _dim = dim.gameObject;
+
+            // Everything with text or buttons stays inside the safe area (clear of notches and rounded corners).
+            _safeRoot = UiFactory.CreateRect("SafeArea", root, Vector2.zero, Vector2.one);
+
+            BuildPlayScreen(_safeRoot);
+
+            // Centre message: countdown, results, camera problems.
+            _message = UiFactory.AddText(
+                UiFactory.CreateRect("Message", _safeRoot, new Vector2(0.05f, 0.38f), new Vector2(0.95f, 0.66f)),
+                88, TextAnchor.MiddleCenter, Color.white, FontStyle.Bold);
+            UiFactory.AddOutline(_message);
+
+            RectTransform allow = UiFactory.CreateRect("AllowCameraButton", _safeRoot, new Vector2(0.2f, 0.28f), new Vector2(0.8f, 0.35f));
+            UiFactory.AddButton(allow, "<b>Allow camera</b>", 52, TextAnchor.MiddleCenter, UiFactory.AccentButtonColor, _camera.RequestPermission);
+            _allowCameraButton = allow.gameObject;
+            _allowCameraButton.SetActive(false);
+
+            _menu = new MenuPanel(_safeRoot);
+
+            if (showModelInput)
+            {
+                // Debug view in the top-right corner, just below the top panel.
+                var modelInputObject = new GameObject("ModelInput", typeof(RectTransform));
+                var modelInputRect = (RectTransform)modelInputObject.transform;
+                modelInputRect.SetParent(_safeRoot, false);
+                modelInputRect.anchorMin = new Vector2(1f, 0.82f);
+                modelInputRect.anchorMax = new Vector2(1f, 0.82f);
+                modelInputRect.pivot = new Vector2(1f, 1f);
+                modelInputRect.anchoredPosition = new Vector2(-16f, -16f);
+                modelInputRect.sizeDelta = new Vector2(320f, 320f);
+                _modelInput = modelInputObject.AddComponent<RawImage>();
+                _modelInput.raycastTarget = false;
+                _modelInput.enabled = false;
+            }
+        }
+
+        private void BuildPlayScreen(Transform parent)
+        {
+            RectTransform play = UiFactory.CreateRect("Play", parent, Vector2.zero, Vector2.one);
+            _playRoot = play.gameObject;
+
+            // Top panel: the task (technique and its sequence, or the seal to practise).
+            RectTransform top = UiFactory.CreateRect("TopPanel", play, new Vector2(0f, 0.82f), Vector2.one);
             _topPanel = UiFactory.AddImage(top, PanelColor);
             _title = UiFactory.AddText(
                 UiFactory.CreateRect("Title", top, new Vector2(0.04f, 0.5f), new Vector2(0.7f, 0.95f)),
                 60, TextAnchor.MiddleLeft, Color.white, FontStyle.Bold);
             _timer = UiFactory.AddText(
                 UiFactory.CreateRect("Timer", top, new Vector2(0.7f, 0.5f), new Vector2(0.96f, 0.95f)),
-                68, TextAnchor.MiddleRight, Color.white, FontStyle.Bold);
+                64, TextAnchor.MiddleRight, Color.white, FontStyle.Bold);
             _sequence = UiFactory.AddText(
                 UiFactory.CreateRect("Sequence", top, new Vector2(0.04f, 0.05f), new Vector2(0.96f, 0.5f)),
                 46, TextAnchor.MiddleLeft, Color.white);
 
-            // Centre message: countdown, results, camera problems.
-            _message = UiFactory.AddText(
-                UiFactory.CreateRect("Message", root, new Vector2(0.05f, 0.36f), new Vector2(0.95f, 0.64f)),
-                88, TextAnchor.MiddleCenter, Color.white, FontStyle.Bold);
-            UiFactory.AddOutline(_message);
-
             // Bottom panel: what the model sees right now.
-            RectTransform bottom = UiFactory.CreateRect("BottomPanel", root, Vector2.zero, new Vector2(1f, 0.17f));
+            RectTransform bottom = UiFactory.CreateRect("BottomPanel", play, Vector2.zero, new Vector2(1f, 0.17f));
             UiFactory.AddImage(bottom, PanelColor);
             _seal = UiFactory.AddText(
                 UiFactory.CreateRect("Seal", bottom, new Vector2(0.04f, 0.45f), new Vector2(0.96f, 0.97f)),
@@ -141,21 +254,14 @@ namespace HandSeals.Game
                 UiFactory.CreateRect("Status", bottom, new Vector2(0.04f, 0.03f), new Vector2(0.96f, 0.27f)),
                 28, TextAnchor.MiddleCenter, MutedColor);
 
-            if (showModelInput)
-            {
-                // Debug view in the top-right corner, just below the top panel.
-                var modelInputObject = new GameObject("ModelInput", typeof(RectTransform));
-                var modelInputRect = (RectTransform)modelInputObject.transform;
-                modelInputRect.SetParent(root, false);
-                modelInputRect.anchorMin = new Vector2(1f, 0.82f);
-                modelInputRect.anchorMax = new Vector2(1f, 0.82f);
-                modelInputRect.pivot = new Vector2(1f, 1f);
-                modelInputRect.anchoredPosition = new Vector2(-16f, -16f);
-                modelInputRect.sizeDelta = new Vector2(320f, 320f);
-                _modelInput = modelInputObject.AddComponent<RawImage>();
-                _modelInput.raycastTarget = false;
-                _modelInput.enabled = false;
-            }
+            // Buttons sit just above the bottom panel, where they do not cover the hands.
+            UiFactory.AddButton(
+                UiFactory.CreateRect("BackButton", play, new Vector2(0.04f, 0.183f), new Vector2(0.3f, 0.235f)),
+                "‹ Menu", 42, TextAnchor.MiddleCenter, PanelColor, _game.OpenMenu);
+
+            RectTransform skip = UiFactory.CreateRect("SkipButton", play, new Vector2(0.7f, 0.183f), new Vector2(0.96f, 0.235f));
+            UiFactory.AddButton(skip, "Skip ›", 42, TextAnchor.MiddleCenter, PanelColor, _game.SkipTrainingSeal);
+            _skipButton = skip.gameObject;
         }
 
         private Image CreateEdge(string edgeName, Vector2 anchorMin, Vector2 anchorMax, Vector2 offsetMin, Vector2 offsetMax)
@@ -164,6 +270,140 @@ namespace HandSeals.Game
             edge.offsetMin = offsetMin;
             edge.offsetMax = offsetMax;
             return UiFactory.AddImage(edge, Color.white);
+        }
+
+        // ---------------------------------------------------------------- screens
+
+        private void ApplySafeArea()
+        {
+            Rect safe = Screen.safeArea;
+            int width = Screen.width;
+            int height = Screen.height;
+
+            if (width <= 0 || height <= 0)
+            {
+                return;
+            }
+
+            if (safe.x == _safeX && safe.y == _safeY && safe.width == _safeWidth && safe.height == _safeHeight
+                && width == _screenWidth && height == _screenHeight)
+            {
+                return;
+            }
+
+            _safeX = safe.x;
+            _safeY = safe.y;
+            _safeWidth = safe.width;
+            _safeHeight = safe.height;
+            _screenWidth = width;
+            _screenHeight = height;
+
+            _safeRoot.anchorMin = new Vector2(safe.x / width, safe.y / height);
+            _safeRoot.anchorMax = new Vector2((safe.x + safe.width) / width, (safe.y + safe.height) / height);
+            _safeRoot.offsetMin = Vector2.zero;
+            _safeRoot.offsetMax = Vector2.zero;
+        }
+
+        private void SyncMode()
+        {
+            GameMode mode = _game.Mode;
+            if (_shownMode.HasValue && _shownMode.Value == mode)
+            {
+                return;
+            }
+
+            _shownMode = mode;
+            bool inMenu = mode == GameMode.Menu;
+
+            _dim.SetActive(inMenu);
+            _menu.SetVisible(inMenu);
+            _playRoot.SetActive(!inMenu);
+            _skipButton.SetActive(mode == GameMode.Training);
+            _allowCameraButton.SetActive(false);
+            _box.gameObject.SetActive(false);
+
+            if (inMenu)
+            {
+                _menu.Refresh(_game);
+            }
+
+            ResetPlayTexts();
+        }
+
+        private void ResetPlayTexts()
+        {
+            _shownJutsu = null;
+            _shownState = NoKey;
+            _shownProgress = NoKey;
+            _shownTarget = NoKey;
+            _shownCorrect = NoKey;
+            _timerKey = NoKey;
+            _messageKey = NoKey;
+            _sealKey = NoKey;
+            _nextStatusTime = 0f;
+
+            _title.text = string.Empty;
+            _timer.text = string.Empty;
+            _timer.color = Color.white;
+            _sequence.text = string.Empty;
+            _message.text = string.Empty;
+            _topPanel.color = PanelColor;
+        }
+
+        /// <summary>Shows what stops the game (model, data or camera trouble). Returns false when all is well.</summary>
+        private bool ShowProblem()
+        {
+            string problem = null;
+            int key = 0;
+            bool canAllow = false;
+
+            if (_recognition.Error != null)
+            {
+                problem = "Model error:\n" + _recognition.Error;
+                key = 901;
+            }
+            else if (_game.Error != null)
+            {
+                problem = "Game data error:\n" + _game.Error;
+                key = 902;
+            }
+            else if (_camera.State == CameraFeedState.Starting)
+            {
+                problem = "Starting the camera…";
+                key = 903;
+            }
+            else if (_camera.State == CameraFeedState.PermissionDenied)
+            {
+                problem = "The game needs the camera\nto see your hands.\n<size=36>If the button does nothing, allow the camera\nfor this app in the system settings.</size>";
+                key = 904;
+                canAllow = true;
+            }
+            else if (_camera.State == CameraFeedState.NoCamera)
+            {
+                problem = "No camera found.";
+                key = 905;
+            }
+
+            if (_allowCameraButton.activeSelf != canAllow)
+            {
+                _allowCameraButton.SetActive(canAllow);
+            }
+
+            if (problem == null)
+            {
+                return false;
+            }
+
+            if (_messageKey != key)
+            {
+                ResetPlayTexts();
+                _messageKey = key;
+                _message.text = problem;
+                _message.fontSize = 52;
+                _message.color = Color.white;
+            }
+
+            return true;
         }
 
         // ---------------------------------------------------------------- per-frame updates
@@ -217,9 +457,13 @@ namespace HandSeals.Game
             LetterboxInfo frame = _recognition.Frame;
 
             bool hasBox = _camera.IsRunning && best.HasValue && frame.ImageWidth > 0;
-            _box.gameObject.SetActive(hasBox);
+            if (_box.gameObject.activeSelf != hasBox)
+            {
+                _box.gameObject.SetActive(hasBox);
+            }
 
-            Color accent = stabilizer.IsConfirmed ? GoodColor : Color.white;
+            bool confirmed = stabilizer.IsConfirmed;
+            Color accent = confirmed ? GoodColor : Color.white;
 
             if (hasBox)
             {
@@ -235,15 +479,26 @@ namespace HandSeals.Game
                 }
             }
 
+            int sealKey = -1;
             if (best.HasValue)
             {
-                _seal.text = best.Value.Seal + "  " + Mathf.RoundToInt(best.Value.Score * 100f) + "%";
-                _seal.color = best.Value.Seal.IsSeal() ? accent : MutedColor;
+                int percent = Mathf.RoundToInt(best.Value.Score * 100f);
+                sealKey = ((int)best.Value.Seal << 8) | percent | (confirmed ? 1 << 16 : 0);
             }
-            else
+
+            if (sealKey != _sealKey)
             {
-                _seal.text = "show a seal";
-                _seal.color = MutedColor;
+                _sealKey = sealKey;
+                if (best.HasValue)
+                {
+                    _seal.text = best.Value.Seal + "  " + Mathf.RoundToInt(best.Value.Score * 100f) + "%";
+                    _seal.color = best.Value.Seal.IsSeal() ? accent : MutedColor;
+                }
+                else
+                {
+                    _seal.text = "show a seal";
+                    _seal.color = MutedColor;
+                }
             }
 
             float hold = (float)stabilizer.GetHoldProgress(Time.unscaledTimeAsDouble);
@@ -251,111 +506,186 @@ namespace HandSeals.Game
             _holdFillImage.color = accent;
         }
 
-        private void UpdateGame()
+        private void UpdateChallenge()
         {
-            _topPanel.color = PanelColor;
-
-            if (_recognition.Error != null)
-            {
-                ShowOnlyMessage("Model error:\n" + _recognition.Error, 44);
-                return;
-            }
-
-            if (_game.Error != null)
-            {
-                ShowOnlyMessage("Game data error:\n" + _game.Error, 44);
-                return;
-            }
-
-            switch (_camera.State)
-            {
-                case CameraFeedState.Starting:
-                    ShowOnlyMessage("Starting the camera…", 64);
-                    return;
-                case CameraFeedState.PermissionDenied:
-                    ShowOnlyMessage("Camera access is needed.\nAllow it in the system settings and come back.", 52);
-                    return;
-                case CameraFeedState.NoCamera:
-                    ShowOnlyMessage("No camera found.", 64);
-                    return;
-            }
-
             GameSession session = _game.Session;
             Jutsu jutsu = session != null ? session.Current : null;
             if (jutsu == null)
             {
-                ShowOnlyMessage(string.Empty, 64);
                 return;
             }
 
-            _title.text = _game.TryGetBestTime(out double bestSeconds)
-                ? jutsu.Name + "\n<size=34><color=#9E9E9E>best " + bestSeconds.ToString("0.0") + " s</color></size>"
-                : jutsu.Name;
+            SessionState state = session.State;
 
-            UpdateSequence(jutsu, session);
-
-            // Brief colour feedback after each confirmed seal.
-            if (Time.unscaledTimeAsDouble - _game.LastMatchTime < FeedbackSeconds)
+            if (!ReferenceEquals(jutsu, _shownJutsu) || (int)state != _shownState || session.Progress != _shownProgress)
             {
-                if (_game.LastMatch == MatchResult.Wrong)
-                {
-                    _topPanel.color = new Color(0.55f, 0.08f, 0.08f, 0.8f);
-                }
-                else if (_game.LastMatch == MatchResult.Correct)
-                {
-                    _topPanel.color = new Color(0.06f, 0.4f, 0.2f, 0.8f);
-                }
+                _shownJutsu = jutsu;
+                _shownState = (int)state;
+                _shownProgress = session.Progress;
+                _timerKey = NoKey;
+
+                _title.text = _game.TryGetBestTime(jutsu, out double bestSeconds)
+                    ? jutsu.Name + "\n<size=34><color=#9E9E9E>best " + bestSeconds.ToString("0.0") + " s</color></size>"
+                    : jutsu.Name;
+
+                _sequence.text = BuildSequence(jutsu, session);
             }
 
-            switch (session.State)
+            _topPanel.color = FeedbackColor(FeedbackSeconds);
+
+            switch (state)
             {
                 case SessionState.Countdown:
-                    _timer.text = string.Empty;
-                    SetMessage(Mathf.CeilToInt((float)session.CountdownLeft).ToString(), 220, Color.white);
+                    SetTimer(-1, string.Empty, Color.white);
+                    int digit = Mathf.Max(1, Mathf.CeilToInt((float)session.CountdownLeft));
+                    if (_messageKey != 100 + digit)
+                    {
+                        SetMessage(100 + digit, digit.ToString(), 220, Color.white);
+                    }
+
                     break;
 
                 case SessionState.WaitingForSeal:
-                    _timer.text = session.TimeLeft.ToString("0.0") + " s";
-                    _timer.color = session.TimeLeft < 3.0 ? BadColor : Color.white;
-                    SetMessage(string.Empty, 88, Color.white);
-                    break;
-
                 case SessionState.Paused:
-                    SetMessage("Paused", 88, Color.white);
+                    int tenths = Mathf.CeilToInt((float)(session.TimeLeft * 10.0));
+                    if (tenths != _timerKey)
+                    {
+                        SetTimer(tenths, (tenths / 10f).ToString("0.0") + " s", session.TimeLeft < 3.0 ? BadColor : Color.white);
+                    }
+
+                    if (state == SessionState.Paused)
+                    {
+                        if (_messageKey != 2)
+                        {
+                            SetMessage(2, "Paused", 88, Color.white);
+                        }
+                    }
+                    else if (_messageKey != 1)
+                    {
+                        SetMessage(1, string.Empty, 88, Color.white);
+                    }
+
                     break;
 
                 case SessionState.Completed:
-                    _timer.text = string.Empty;
-                    SetMessage(
-                        jutsu.Name + "!\n<size=56>+" + session.LastScore + "  ·  " + _game.LastTime.ToString("0.0") + " s"
-                        + (_game.LastWasRecord ? "  ·  new best" : string.Empty)
-                        + (session.Combo > 1 ? "\ncombo x" + session.Combo : string.Empty) + "</size>",
-                        88,
-                        GoodColor);
+                    SetTimer(-1, string.Empty, Color.white);
+                    if (_messageKey != 3)
+                    {
+                        SetMessage(
+                            3,
+                            jutsu.Name + "!\n<size=56>+" + session.LastScore + "  ·  " + _game.LastTime.ToString("0.0") + " s"
+                            + (_game.LastWasRecord ? "  ·  new best" : string.Empty)
+                            + (session.Combo > 1 ? "\ncombo x" + session.Combo : string.Empty) + "</size>",
+                            88,
+                            GoodColor);
+                    }
+
                     break;
 
                 case SessionState.Failed:
-                    _timer.text = "0.0 s";
-                    SetMessage("Time's up\n<size=56>try again</size>", 88, BadColor);
+                    SetTimer(-2, "0.0 s", BadColor);
+                    if (_messageKey != 4)
+                    {
+                        SetMessage(4, "Time's up\n<size=56>try again</size>", 88, BadColor);
+                    }
+
                     break;
 
                 default:
-                    _timer.text = string.Empty;
-                    SetMessage(string.Empty, 88, Color.white);
+                    SetTimer(-1, string.Empty, Color.white);
+                    if (_messageKey != 1)
+                    {
+                        SetMessage(1, string.Empty, 88, Color.white);
+                    }
+
                     break;
             }
         }
 
-        private void UpdateSequence(Jutsu jutsu, GameSession session)
+        private void UpdateTraining()
         {
-            int signature = (jutsu.Id.GetHashCode() * 397) ^ (session.Progress * 31) ^ (int)session.State;
-            if (signature == _sequenceSignature)
+            TrainingSession training = _game.Training;
+            if (training == null)
             {
                 return;
             }
 
-            _sequenceSignature = signature;
+            if ((int)training.Target != _shownTarget || training.CorrectCount != _shownCorrect)
+            {
+                _shownTarget = (int)training.Target;
+                _shownCorrect = training.CorrectCount;
 
+                _title.text = "Training";
+                _timer.text = training.CorrectCount + " done";
+                _timer.color = Color.white;
+                _sequence.text = "Make this seal:   <size=84><b>" + training.Target + "</b></size>";
+            }
+
+            _topPanel.color = FeedbackColor(TrainingFeedbackSeconds);
+
+            // Tell the player what the model saw: a named mistake teaches more than a red flash.
+            bool recent = Time.unscaledTimeAsDouble - _game.LastMatchTime < TrainingFeedbackSeconds;
+            if (recent && _game.LastMatch == MatchResult.Correct)
+            {
+                if (_messageKey != 201)
+                {
+                    SetMessage(201, "Correct!", 110, GoodColor);
+                }
+            }
+            else if (recent && _game.LastMatch == MatchResult.Wrong)
+            {
+                int key = 300 + (int)_game.LastSeal;
+                if (_messageKey != key)
+                {
+                    SetMessage(key, "That was " + _game.LastSeal, 88, BadColor);
+                }
+            }
+            else if (_messageKey != 1)
+            {
+                SetMessage(1, string.Empty, 88, Color.white);
+            }
+        }
+
+        private void UpdateStatus()
+        {
+            if (Time.unscaledTime < _nextStatusTime)
+            {
+                return;
+            }
+
+            _nextStatusTime = Time.unscaledTime + StatusInterval;
+
+            _builder.Length = 0;
+            _builder.Append(_recognition.BackendName)
+                .Append("  ·  ").Append(Mathf.RoundToInt(_recognition.LastInferenceMs)).Append(" ms");
+
+            if (_camera.IsRunning)
+            {
+                _builder.Append("  ·  ").Append(_camera.Width).Append('x').Append(_camera.Height)
+                    .Append("  ·  rot ").Append(_camera.RotationAngle);
+            }
+
+            TrainingSession training = _game.Training;
+            if (_game.Mode == GameMode.Training && training != null)
+            {
+                _builder.Append("  ·  mistakes ").Append(training.Mistakes);
+                if (training.CorrectCount > 0)
+                {
+                    _builder.Append("  ·  fastest ").Append(training.BestSeconds.ToString("0.0")).Append(" s");
+                }
+            }
+            else if (_game.Session != null)
+            {
+                _builder.Append("  ·  score ").Append(_game.Session.TotalScore);
+            }
+
+            _status.text = _builder.ToString();
+        }
+
+        // ---------------------------------------------------------------- helpers
+
+        private string BuildSequence(Jutsu jutsu, GameSession session)
+        {
             bool active = session.State == SessionState.WaitingForSeal || session.State == SessionState.Paused;
             int done = session.State == SessionState.Completed ? jutsu.Sequence.Count : session.Progress;
 
@@ -382,42 +712,43 @@ namespace HandSeals.Game
                 }
             }
 
-            _sequence.text = _builder.ToString();
+            return _builder.ToString();
         }
 
-        private void UpdateStatus()
+        /// <summary>Panel colour for a short time after a confirmed seal: green for right, red for wrong.</summary>
+        private Color FeedbackColor(float seconds)
         {
-            GameSession session = _game.Session;
-
-            _builder.Length = 0;
-            _builder.Append(_recognition.BackendName)
-                .Append("  ·  ").Append(Mathf.RoundToInt(_recognition.LastInferenceMs)).Append(" ms");
-
-            if (_camera.IsRunning)
+            if (Time.unscaledTimeAsDouble - _game.LastMatchTime < seconds)
             {
-                _builder.Append("  ·  ").Append(_camera.Width).Append('x').Append(_camera.Height)
-                    .Append("  ·  rot ").Append(_camera.RotationAngle);
+                if (_game.LastMatch == MatchResult.Wrong)
+                {
+                    return PanelBadColor;
+                }
+
+                if (_game.LastMatch == MatchResult.Correct || _game.LastMatch == MatchResult.Completed)
+                {
+                    return PanelGoodColor;
+                }
             }
 
-            if (session != null)
+            return PanelColor;
+        }
+
+        private void SetTimer(int key, string text, Color color)
+        {
+            if (_timerKey == key)
             {
-                _builder.Append("  ·  score ").Append(session.TotalScore);
+                return;
             }
 
-            _status.text = _builder.ToString();
+            _timerKey = key;
+            _timer.text = text;
+            _timer.color = color;
         }
 
-        private void ShowOnlyMessage(string text, int fontSize)
+        private void SetMessage(int key, string text, int fontSize, Color color)
         {
-            _title.text = string.Empty;
-            _timer.text = string.Empty;
-            _sequence.text = string.Empty;
-            _sequenceSignature = -1;
-            SetMessage(text, fontSize, Color.white);
-        }
-
-        private void SetMessage(string text, int fontSize, Color color)
-        {
+            _messageKey = key;
             _message.text = text;
             _message.fontSize = fontSize;
             _message.color = color;

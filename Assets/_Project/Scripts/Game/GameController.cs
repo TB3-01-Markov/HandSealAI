@@ -5,9 +5,21 @@ using UnityEngine;
 
 namespace HandSeals.Game
 {
+    public enum GameMode
+    {
+        /// <summary>The main menu; recognition is paused.</summary>
+        Menu = 0,
+
+        /// <summary>Practising single seals without a timer.</summary>
+        Training = 1,
+
+        /// <summary>Performing techniques against the clock.</summary>
+        Challenge = 2
+    }
+
     /// <summary>
-    /// Drives the game loop: starts a jutsu when the camera is ready, forwards confirmed seals to the session,
-    /// shows the result for a moment and moves on to the next jutsu (or repeats a failed one).
+    /// Owns the game flow: which mode is active, the training session and the technique session.
+    /// Confirmed seals from the recognition go to whichever mode is running.
     /// </summary>
     public sealed class GameController : MonoBehaviour
     {
@@ -22,7 +34,18 @@ namespace HandSeals.Game
         private double _resultTimeLeft;
         private bool _appPaused;
 
+        public GameMode Mode { get; private set; } = GameMode.Menu;
+
+        /// <summary>All techniques, in the order of the data file.</summary>
+        public IReadOnlyList<Jutsu> Techniques => _jutsu;
+
         public GameSession Session { get; private set; }
+
+        /// <summary>The running practice, or null outside the training mode.</summary>
+        public TrainingSession Training { get; private set; }
+
+        /// <summary>True when completing a technique moves on to the next one instead of repeating it.</summary>
+        public bool PlayAll { get; private set; }
 
         /// <summary>Set when the techniques could not be loaded.</summary>
         public string Error { get; private set; }
@@ -34,6 +57,9 @@ namespace HandSeals.Game
 
         /// <summary>Outcome of the most recent confirmed seal, for UI feedback.</summary>
         public MatchResult LastMatch { get; private set; } = MatchResult.Ignored;
+
+        /// <summary>The seal that produced <see cref="LastMatch"/>.</summary>
+        public SealType LastSeal { get; private set; } = SealType.None;
 
         /// <summary>Unscaled time of <see cref="LastMatch"/>.</summary>
         public double LastMatchTime { get; private set; } = double.NegativeInfinity;
@@ -68,25 +94,85 @@ namespace HandSeals.Game
             Session.StateChanged += HandleStateChanged;
             Session.SealApplied += HandleSealApplied;
             _recognition.SealConfirmed += HandleSealConfirmed;
+
+            SetMode(GameMode.Menu);
         }
 
-        /// <summary>Best completion time for the current jutsu, if the player has one.</summary>
-        public bool TryGetBestTime(out double seconds)
+        public void OpenMenu()
+        {
+            Session.Abort();
+            Training = null;
+            SetMode(GameMode.Menu);
+        }
+
+        public void StartTraining()
+        {
+            Session.Abort();
+            Training = new TrainingSession(SealSets.Zodiac);
+            SetMode(GameMode.Training);
+        }
+
+        /// <summary>Starts a technique. With <paramref name="playAll"/> the techniques follow one another.</summary>
+        public void StartChallenge(int index, bool playAll)
+        {
+            if (_jutsu.Count == 0)
+            {
+                return;
+            }
+
+            _index = Math.Min(Math.Max(index, 0), _jutsu.Count - 1);
+            PlayAll = playAll;
+            Training = null;
+            Session.Abort();
+            SetMode(GameMode.Challenge);
+        }
+
+        /// <summary>In training, replaces the current seal with another one.</summary>
+        public void SkipTrainingSeal()
+        {
+            if (Mode == GameMode.Training && Training != null)
+            {
+                Training.Skip();
+            }
+        }
+
+        public bool TryGetBestTime(Jutsu jutsu, out double seconds)
         {
             seconds = 0;
-            return Session != null
-                && Session.Current != null
-                && _progress.TryGetBestTime(Session.Current.Id, out seconds);
+            return jutsu != null && _progress != null && _progress.TryGetBestTime(jutsu.Id, out seconds);
+        }
+
+        private void SetMode(GameMode mode)
+        {
+            Mode = mode;
+            LastMatch = MatchResult.Ignored;
+            LastSeal = SealType.None;
+            LastMatchTime = double.NegativeInfinity;
+
+            // A seal still held from the previous screen must not count on the new one.
+            _recognition.Stabilizer.Reset();
+            _recognition.Paused = mode == GameMode.Menu;
         }
 
         private void Update()
         {
-            if (Session == null || Error != null)
+            if (Session == null || Mode == GameMode.Menu)
             {
                 return;
             }
 
             bool ready = _camera.IsRunning && _recognition.Error == null && !_appPaused;
+
+            if (Mode == GameMode.Training)
+            {
+                if (ready && Training != null)
+                {
+                    Training.Tick(Time.deltaTime);
+                }
+
+                return;
+            }
+
             if (!ready)
             {
                 Session.Pause();
@@ -108,7 +194,7 @@ namespace HandSeals.Game
                     _resultTimeLeft -= Time.unscaledDeltaTime;
                     if (_resultTimeLeft <= 0)
                     {
-                        if (Session.State == SessionState.Completed)
+                        if (Session.State == SessionState.Completed && PlayAll)
                         {
                             _index = (_index + 1) % _jutsu.Count;
                         }
@@ -151,11 +237,28 @@ namespace HandSeals.Game
 
         private void HandleSealConfirmed(SealType seal)
         {
-            Session.OnSealConfirmed(seal);
+            if (Mode == GameMode.Challenge)
+            {
+                Session.OnSealConfirmed(seal);
+            }
+            else if (Mode == GameMode.Training && Training != null)
+            {
+                MatchResult result = Training.OnSealConfirmed(seal);
+                if (result != MatchResult.Ignored)
+                {
+                    RememberMatch(seal, result);
+                }
+            }
         }
 
         private void HandleSealApplied(SealType seal, MatchResult result)
         {
+            RememberMatch(seal, result);
+        }
+
+        private void RememberMatch(SealType seal, MatchResult result)
+        {
+            LastSeal = seal;
             LastMatch = result;
             LastMatchTime = Time.unscaledTimeAsDouble;
         }

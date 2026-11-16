@@ -70,7 +70,11 @@ namespace HandSeals.EditorTools
                 PlayerSettings.SetApplicationIdentifier(NamedBuildTarget.Android, "com.handsealai.game");
             }
 
-            Debug.Log("HandSealAI: player settings applied (portrait orientation, product name, Android identifier).");
+            // Phones sold in the last years are 64-bit; many of them refuse to install a 32-bit-only build.
+            PlayerSettings.SetScriptingBackend(NamedBuildTarget.Android, ScriptingImplementation.IL2CPP);
+            PlayerSettings.Android.targetArchitectures = AndroidArchitecture.ARM64;
+
+            Debug.Log("HandSealAI: player settings applied (portrait, product name, Android identifier, IL2CPP + ARM64).");
         }
 
         private static void CreateMainScene()

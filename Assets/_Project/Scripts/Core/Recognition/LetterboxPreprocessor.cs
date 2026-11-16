@@ -75,7 +75,9 @@ namespace HandSeals.Core
             int imageWidth = swapAxes ? sourceHeight : sourceWidth;
             int imageHeight = swapAxes ? sourceWidth : sourceHeight;
 
-            float ratio = Math.Min(InputSize / (float)imageHeight, InputSize / (float)imageWidth);
+            // Double precision on purpose: in single precision 640 * (416 / 640) can come out a hair
+            // below 416 and truncate to 415, which the reference implementation never does.
+            double ratio = Math.Min(InputSize / (double)imageHeight, InputSize / (double)imageWidth);
             int scaledWidth = Math.Max(1, Math.Min(InputSize, (int)(imageWidth * ratio)));
             int scaledHeight = Math.Max(1, Math.Min(InputSize, (int)(imageHeight * ratio)));
 
@@ -126,7 +128,7 @@ namespace HandSeals.Core
                 }
             }
 
-            return new LetterboxInfo(imageWidth, imageHeight, scaledWidth, scaledHeight, ratio);
+            return new LetterboxInfo(imageWidth, imageHeight, scaledWidth, scaledHeight, (float)ratio);
         }
 
         /// <summary>

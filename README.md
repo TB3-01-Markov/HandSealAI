@@ -7,14 +7,19 @@ Everything runs on the device. No server, no account, no network.
 
 ## Status
 
-Version 0.1, the first playable loop:
+Version 0.2:
 
 - live recognition of 12 zodiac hand seals (plus two extra gestures) with a YOLOX-nano model running on Unity Sentis
-- a seal counts only after it is held for 0.4 s, so moving between seals does not trigger anything
-- five techniques with timers, sequence progress, mistakes, score, combo and locally saved best times
-- game rules and model pre/post-processing in a Unity-free C# library covered by 89 unit tests
+- a seal counts only after it is held for 0.4 s; short dropouts and one-frame misreads do not interrupt the hold
+- main menu with a training mode and a list of techniques
+- **training**: the game names a random seal, you make it, the next one follows; it counts correct answers,
+  mistakes and your fastest answer, and tells you which seal it saw when you got it wrong
+- **techniques**: five sequences against the clock with progress, score, combo and locally saved best times;
+  play one on repeat or all of them in a row
+- game rules and model pre/post-processing in a Unity-free C# library covered by 115 unit tests
 
-Not there yet: menus, training mode, seal reference cards, visual effects and sound. See [Roadmap](#roadmap).
+Not there yet: reference cards with photos of the seals, visual effects, sound, a settings screen.
+See [Roadmap](#roadmap).
 
 ## How it works
 
@@ -30,13 +35,13 @@ flowchart LR
 
 | Assembly | Depends on | What is inside |
 | --- | --- | --- |
-| `HandSeals.Core` | nothing (no Unity references) | seals, frame preprocessing, YOLOX decoding, stabilizer, techniques, game session, scoring, progress |
+| `HandSeals.Core` | nothing (no Unity references) | seals, frame preprocessing, YOLOX decoding, stabilizer, techniques, game session, training session, scoring, progress |
 | `HandSeals.Recognition` | Core, Sentis | `SentisYoloxDetector`: runs the model and returns detections |
-| `HandSeals.Game` | Core, Recognition, uGUI | camera, recognition loop, game loop, HUD, JSON data |
+| `HandSeals.Game` | Core, Recognition, uGUI | camera, recognition loop, game modes, menu and HUD, JSON data |
 | `HandSeals.Editor` | Game | creates the main scene and applies player settings |
 
 Camera frames go to the model only when the previous inference has finished, so the preview stays smooth
-however fast or slow the phone is.
+however fast or slow the phone is. In the menu the model is paused to save battery.
 
 ## Getting started
 
@@ -45,7 +50,7 @@ Requirements: **Unity 6** (6000.0 LTS or newer) with the **Android Build Support
 1. Clone the repository and add the folder in Unity Hub. If Hub says the exact editor version is missing,
    pick the Unity 6 version you have installed.
 2. On the first import Unity downloads the packages (Sentis is `com.unity.ai.inference`), and an editor script
-   creates `Assets/_Project/Scenes/Main.unity` and sets portrait orientation.
+   creates `Assets/_Project/Scenes/Main.unity` and applies the player settings (portrait, IL2CPP, ARM64).
    If the scene did not appear, use the menu **HandSealAI > Create main scene**.
 3. Press **Play**. In the editor the game uses your webcam.
 4. For the phone: **File > Build Profiles > Android > Switch Platform**, connect the phone with USB debugging
@@ -53,8 +58,13 @@ Requirements: **Unity 6** (6000.0 LTS or newer) with the **Android Build Support
 5. Commit what Unity generated on the first import (`.meta` files, the scene, `ProjectSettings/`), so the
    project opens identically on another machine.
 
-Playing: stand the phone upright against something, step back until your hands and chest are in the picture,
-and make the seals shown at the top from left to right. Good, even light helps a lot.
+Playing: pick a mode in the menu, stand the phone upright against something and step back until your hands
+and chest are in the picture. The top of the screen shows what to do, the bottom shows what the model sees
+and how long you still have to hold the seal. Good, even light helps a lot. The **Menu** button or the
+Android back button returns to the menu.
+
+Buttons work with either input backend: the built-in Input Manager, or the Input System package if the
+project is switched to it.
 
 ## Tuning
 
@@ -103,8 +113,7 @@ implementation on real photos: identical detections, input tensors within one gr
 
 ## Roadmap
 
-- main menu, technique selection, training mode for single seals
-- reference cards with photos of every seal
+- reference cards with photos of every seal, shown in the training mode
 - effects and sound when a technique completes
 - settings screen (sensitivity, hold time, volume)
 - recording frames on the device to fine-tune the model on more hands and lighting

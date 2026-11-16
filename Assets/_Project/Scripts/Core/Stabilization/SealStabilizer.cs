@@ -5,13 +5,16 @@ namespace HandSeals.Core
     /// <summary>
     /// Turns noisy per-frame detections into deliberate "the player made this seal" events.
     /// A seal is confirmed once it has been held for <see cref="HoldSeconds"/>; it is confirmed only once
-    /// until the hands are released or change to another seal.
+    /// until the hands are released or change to another seal. Short dropouts and one-frame misreads
+    /// (the model briefly naming a similar seal) do not interrupt the hold.
     /// </summary>
     public sealed class SealStabilizer
     {
         private double _candidateSince;
         private double _lastSeen;
         private bool _confirmed;
+        private SealType _challenger = SealType.None;
+        private double _challengerSince;
 
         /// <summary>How long a seal must be held before it counts.</summary>
         public double HoldSeconds { get; set; } = 0.4;
@@ -19,7 +22,10 @@ namespace HandSeals.Core
         /// <summary>Detections below this score are treated as "nothing".</summary>
         public float MinScore { get; set; } = 0.6f;
 
-        /// <summary>A detection gap shorter than this does not interrupt the hold.</summary>
+        /// <summary>
+        /// The held seal survives this long without being seen, whether the model reports nothing
+        /// or a different seal in the meantime.
+        /// </summary>
         public double GraceSeconds { get; set; } = 0.15;
 
         /// <summary>The seal currently being held, or None.</summary>
@@ -41,6 +47,7 @@ namespace HandSeals.Core
 
             if (observed == SealType.None)
             {
+                _challenger = SealType.None;
                 if (Candidate != SealType.None && time - _lastSeen > GraceSeconds)
                 {
                     Reset();
@@ -49,14 +56,32 @@ namespace HandSeals.Core
                 return;
             }
 
-            if (observed != Candidate)
+            if (Candidate == SealType.None)
             {
-                Candidate = observed;
-                _candidateSince = time;
-                _confirmed = false;
+                Begin(observed, time, time);
             }
+            else if (observed == Candidate)
+            {
+                _challenger = SealType.None;
+                _lastSeen = time;
+            }
+            else
+            {
+                // A different seal. It replaces the candidate only once the candidate has been
+                // out of sight for longer than the grace period; its hold counts from its first sighting.
+                if (_challenger != observed)
+                {
+                    _challenger = observed;
+                    _challengerSince = time;
+                }
 
-            _lastSeen = time;
+                if (time - _lastSeen <= GraceSeconds)
+                {
+                    return;
+                }
+
+                Begin(observed, _challengerSince, time);
+            }
 
             if (!_confirmed && time - _candidateSince >= HoldSeconds)
             {
@@ -88,6 +113,17 @@ namespace HandSeals.Core
             _confirmed = false;
             _candidateSince = 0;
             _lastSeen = 0;
+            _challenger = SealType.None;
+            _challengerSince = 0;
+        }
+
+        private void Begin(SealType seal, double since, double now)
+        {
+            Candidate = seal;
+            _candidateSince = since;
+            _lastSeen = now;
+            _confirmed = false;
+            _challenger = SealType.None;
         }
     }
 }

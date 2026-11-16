@@ -1,0 +1,39 @@
+{
+  "jutsu": [
+    {
+      "id": "ember-spark",
+      "name": "Ember Spark",
+      "seals": ["Ox", "Tiger", "Bird"],
+      "timeLimitSeconds": 10,
+      "baseScore": 100
+    },
+    {
+      "id": "gale-step",
+      "name": "Gale Step",
+      "seals": ["Bird", "Snake", "Ram"],
+      "timeLimitSeconds": 10,
+      "baseScore": 100
+    },
+    {
+      "id": "tide-wall",
+      "name": "Tide Wall",
+      "seals": ["Dragon", "Hare", "Monkey", "Dog"],
+      "timeLimitSeconds": 12,
+      "baseScore": 150
+    },
+    {
+      "id": "stone-root",
+      "name": "Stone Root",
+      "seals": ["Boar", "Ox", "Dog", "Rat", "Tiger"],
+      "timeLimitSeconds": 15,
+      "baseScore": 200
+    },
+    {
+      "id": "storm-lance",
+      "name": "Storm Lance",
+      "seals": ["Rat", "Horse", "Dragon", "Snake", "Monkey", "Tiger"],
+      "timeLimitSeconds": 18,
+      "baseScore": 300
+    }
+  ]
+}

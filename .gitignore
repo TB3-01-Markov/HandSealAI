@@ -1,0 +1,46 @@
+# Unity
+/[Ll]ibrary/
+/[Tt]emp/
+/[Oo]bj/
+/[Bb]uild/
+/[Bb]uilds/
+/[Ll]ogs/
+/[Uu]ser[Ss]ettings/
+/[Mm]emoryCaptures/
+/[Rr]ecordings/
+/Assets/Plugins/Editor/JetBrains*
+
+# Files Unity generates for the IDE (the hand-written projects live in /dotnet)
+/*.csproj
+/*.sln
+/*.slnx
+/*.suo
+/*.user
+/*.userprefs
+/*.pidb
+/*.booproj
+/.vs/
+/.vscode/
+/.idea/
+/.gradle/
+/.utmp/
+
+# Builds
+*.apk
+*.aab
+*.unitypackage
+*.app
+crashlytics-build.properties
+
+# Crash reports
+sysinfo.txt
+mono_crash.*
+
+# .NET build output of /dotnet
+dotnet/**/bin/
+dotnet/**/obj/
+TestResults/
+
+# OS
+.DS_Store
+Thumbs.db

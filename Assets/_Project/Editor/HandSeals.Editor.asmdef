@@ -1,0 +1,19 @@
+{
+    "name": "HandSeals.Editor",
+    "rootNamespace": "HandSeals.EditorTools",
+    "references": [
+        "HandSeals.Core",
+        "HandSeals.Game"
+    ],
+    "includePlatforms": [
+        "Editor"
+    ],
+    "excludePlatforms": [],
+    "allowUnsafeCode": false,
+    "overrideReferences": false,
+    "precompiledReferences": [],
+    "autoReferenced": true,
+    "defineConstraints": [],
+    "versionDefines": [],
+    "noEngineReferences": false
+}

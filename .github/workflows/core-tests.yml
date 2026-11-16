@@ -1,0 +1,19 @@
+name: Core tests
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: 8.0.x
+
+      - name: Run the core unit tests
+        run: dotnet test dotnet/HandSealAI.Core.sln --configuration Release

@@ -1,0 +1,17 @@
+{
+    "name": "HandSeals.Recognition",
+    "rootNamespace": "HandSeals.Recognition",
+    "references": [
+        "HandSeals.Core",
+        "Unity.InferenceEngine"
+    ],
+    "includePlatforms": [],
+    "excludePlatforms": [],
+    "allowUnsafeCode": false,
+    "overrideReferences": false,
+    "precompiledReferences": [],
+    "autoReferenced": true,
+    "defineConstraints": [],
+    "versionDefines": [],
+    "noEngineReferences": false
+}

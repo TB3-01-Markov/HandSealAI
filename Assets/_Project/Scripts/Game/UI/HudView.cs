@@ -7,8 +7,8 @@ namespace HandSeals.Game
 {
     /// <summary>
     /// Everything on screen, built from code so that no prefabs are needed: the mirrored camera preview with
-    /// the detection box, the main menu, and the play screen shared by the training and the technique mode
-    /// (task at the top, recognised seal with a hold bar at the bottom).
+    /// the detection box, the main menu, the settings, and the play screen shared by the training and the
+    /// technique mode (task at the top, recognised seal with a hold bar at the bottom), plus sound and effects.
     /// </summary>
     public sealed class HudView : MonoBehaviour
     {
@@ -28,6 +28,7 @@ namespace HandSeals.Game
         private CameraFeed _camera;
         private RecognitionController _recognition;
         private GameController _game;
+        private FeedbackAudio _audio;
 
         // Preview
         private RectTransform _previewArea;
@@ -44,6 +45,9 @@ namespace HandSeals.Game
         private GameObject _skipButton;
         private GameObject _allowCameraButton;
         private MenuPanel _menu;
+        private SettingsPanel _settings;
+        private BurstEffect _effects;
+        private bool _settingsOpen;
 
         // Play screen
         private Image _topPanel;
@@ -59,7 +63,7 @@ namespace HandSeals.Game
 
         // What is currently shown, so that strings are rebuilt only when something changed.
         private readonly StringBuilder _builder = new StringBuilder(256);
-        private GameMode? _shownMode;
+        private int _shownScreen = NoKey;
         private Jutsu _shownJutsu;
         private int _shownState = NoKey;
         private int _shownProgress = NoKey;
@@ -76,19 +80,35 @@ namespace HandSeals.Game
         private int _screenWidth;
         private int _screenHeight;
 
-        public void Initialize(CameraFeed cameraFeed, RecognitionController recognition, GameController game, bool showModelInput)
+        public void Initialize(CameraFeed cameraFeed, RecognitionController recognition, GameController game, FeedbackAudio audioFeedback)
         {
             _camera = cameraFeed;
             _recognition = recognition;
             _game = game;
-            _recognition.CaptureModelInput = showModelInput;
+            _audio = audioFeedback;
 
             UiInput.EnsureEventSystem();
-            Build(showModelInput);
+            Build();
 
             _menu.TrainingClicked += _game.StartTraining;
             _menu.PlayAllClicked += () => _game.StartChallenge(0, true);
             _menu.TechniqueClicked += index => _game.StartChallenge(index, false);
+            _menu.SettingsClicked += () => _settingsOpen = true;
+
+            _settings.Changed += _game.ApplySettings;
+            _settings.BackClicked += () => _settingsOpen = false;
+
+            _game.Judged += HandleJudged;
+            _game.ChallengeEnded += HandleChallengeEnded;
+        }
+
+        private void OnDestroy()
+        {
+            if (_game != null)
+            {
+                _game.Judged -= HandleJudged;
+                _game.ChallengeEnded -= HandleChallengeEnded;
+            }
         }
 
         private void Update()
@@ -102,7 +122,11 @@ namespace HandSeals.Game
 
             if (UiInput.BackPressed())
             {
-                if (_game.Mode == GameMode.Menu)
+                if (_settingsOpen)
+                {
+                    _settingsOpen = false;
+                }
+                else if (_game.Mode == GameMode.Menu)
                 {
                     Application.Quit();
                 }
@@ -112,7 +136,7 @@ namespace HandSeals.Game
                 }
             }
 
-            SyncMode();
+            SyncScreens();
             UpdatePreview();
 
             if (_game.Mode == GameMode.Menu)
@@ -139,7 +163,7 @@ namespace HandSeals.Game
 
         // ---------------------------------------------------------------- construction
 
-        private void Build(bool showModelInput)
+        private void Build()
         {
             var canvasObject = new GameObject("HUD", typeof(RectTransform));
             canvasObject.transform.SetParent(transform, false);
@@ -202,22 +226,25 @@ namespace HandSeals.Game
             _allowCameraButton.SetActive(false);
 
             _menu = new MenuPanel(_safeRoot);
+            _settings = new SettingsPanel(_safeRoot);
 
-            if (showModelInput)
-            {
-                // Debug view in the top-right corner, just below the top panel.
-                var modelInputObject = new GameObject("ModelInput", typeof(RectTransform));
-                var modelInputRect = (RectTransform)modelInputObject.transform;
-                modelInputRect.SetParent(_safeRoot, false);
-                modelInputRect.anchorMin = new Vector2(1f, 0.82f);
-                modelInputRect.anchorMax = new Vector2(1f, 0.82f);
-                modelInputRect.pivot = new Vector2(1f, 1f);
-                modelInputRect.anchoredPosition = new Vector2(-16f, -16f);
-                modelInputRect.sizeDelta = new Vector2(320f, 320f);
-                _modelInput = modelInputObject.AddComponent<RawImage>();
-                _modelInput.raycastTarget = false;
-                _modelInput.enabled = false;
-            }
+            // Debug view of the model input in the top-right corner, just below the top panel (switched in settings).
+            var modelInputObject = new GameObject("ModelInput", typeof(RectTransform));
+            var modelInputRect = (RectTransform)modelInputObject.transform;
+            modelInputRect.SetParent(_playRoot.transform, false);
+            modelInputRect.anchorMin = new Vector2(1f, 0.82f);
+            modelInputRect.anchorMax = new Vector2(1f, 0.82f);
+            modelInputRect.pivot = new Vector2(1f, 1f);
+            modelInputRect.anchoredPosition = new Vector2(-16f, -16f);
+            modelInputRect.sizeDelta = new Vector2(320f, 320f);
+            _modelInput = modelInputObject.AddComponent<RawImage>();
+            _modelInput.raycastTarget = false;
+            _modelInput.enabled = false;
+
+            // Effects go on top of everything; their images never catch taps.
+            RectTransform effectsLayer = UiFactory.CreateRect("Effects", root, Vector2.zero, Vector2.one);
+            _effects = effectsLayer.gameObject.AddComponent<BurstEffect>();
+            _effects.Build(effectsLayer);
         }
 
         private void BuildPlayScreen(Transform parent)
@@ -304,25 +331,36 @@ namespace HandSeals.Game
             _safeRoot.offsetMax = Vector2.zero;
         }
 
-        private void SyncMode()
+        private void SyncScreens()
         {
             GameMode mode = _game.Mode;
-            if (_shownMode.HasValue && _shownMode.Value == mode)
+            if (mode != GameMode.Menu)
+            {
+                _settingsOpen = false;
+            }
+
+            int screen = (int)mode * 2 + (_settingsOpen ? 1 : 0);
+            if (screen == _shownScreen)
             {
                 return;
             }
 
-            _shownMode = mode;
+            _shownScreen = screen;
             bool inMenu = mode == GameMode.Menu;
 
             _dim.SetActive(inMenu);
-            _menu.SetVisible(inMenu);
+            _menu.SetVisible(inMenu && !_settingsOpen);
+            _settings.SetVisible(inMenu && _settingsOpen);
             _playRoot.SetActive(!inMenu);
             _skipButton.SetActive(mode == GameMode.Training);
             _allowCameraButton.SetActive(false);
             _box.gameObject.SetActive(false);
 
-            if (inMenu)
+            if (inMenu && _settingsOpen)
+            {
+                _settings.Show(_game.Settings);
+            }
+            else if (inMenu)
             {
                 _menu.Refresh(_game);
             }
@@ -443,10 +481,15 @@ namespace HandSeals.Game
             // A front camera should behave like a mirror.
             _mirrorRoot.localScale = new Vector3(_camera.IsFrontFacing ? -1f : 1f, 1f, 1f);
 
-            if (_modelInput != null && _recognition.ModelInputTexture != null)
+            bool showInput = _recognition.CaptureModelInput && _recognition.ModelInputTexture != null;
+            if (showInput && _modelInput.texture != _recognition.ModelInputTexture)
             {
                 _modelInput.texture = _recognition.ModelInputTexture;
-                _modelInput.enabled = true;
+            }
+
+            if (_modelInput.enabled != showInput)
+            {
+                _modelInput.enabled = showInput;
             }
         }
 
@@ -479,6 +522,8 @@ namespace HandSeals.Game
                 }
             }
 
+            RecognitionHint hint = HintsAllowed() ? _recognition.Hints.Current : RecognitionHint.None;
+
             int sealKey = -1;
             if (best.HasValue)
             {
@@ -486,13 +531,23 @@ namespace HandSeals.Game
                 sealKey = ((int)best.Value.Seal << 8) | percent | (confirmed ? 1 << 16 : 0);
             }
 
+            sealKey ^= (int)hint << 20;
+
             if (sealKey != _sealKey)
             {
                 _sealKey = sealKey;
                 if (best.HasValue)
                 {
-                    _seal.text = best.Value.Seal + "  " + Mathf.RoundToInt(best.Value.Score * 100f) + "%";
+                    _seal.text = best.Value.Seal + "  " + UiFormat.Percent(best.Value.Score)
+                        + (hint == RecognitionHint.HoldSteady
+                            ? "\n<size=36><color=#E0E0E0>hold it steady, facing the camera</color></size>"
+                            : string.Empty);
                     _seal.color = best.Value.Seal.IsSeal() ? accent : MutedColor;
+                }
+                else if (hint != RecognitionHint.None)
+                {
+                    _seal.text = "<size=56>Show your hands</size>\n<size=36>step back a little · more light helps</size>";
+                    _seal.color = Color.white;
                 }
                 else
                 {
@@ -519,13 +574,18 @@ namespace HandSeals.Game
 
             if (!ReferenceEquals(jutsu, _shownJutsu) || (int)state != _shownState || session.Progress != _shownProgress)
             {
+                if (_shownState == (int)SessionState.Countdown && state == SessionState.WaitingForSeal)
+                {
+                    _audio.Play(FeedbackSound.Go);
+                }
+
                 _shownJutsu = jutsu;
                 _shownState = (int)state;
                 _shownProgress = session.Progress;
                 _timerKey = NoKey;
 
                 _title.text = _game.TryGetBestTime(jutsu, out double bestSeconds)
-                    ? jutsu.Name + "\n<size=34><color=#9E9E9E>best " + bestSeconds.ToString("0.0") + " s</color></size>"
+                    ? jutsu.Name + "\n<size=34><color=#9E9E9E>best " + UiFormat.Seconds(bestSeconds) + "</color></size>"
                     : jutsu.Name;
 
                 _sequence.text = BuildSequence(jutsu, session);
@@ -541,6 +601,7 @@ namespace HandSeals.Game
                     if (_messageKey != 100 + digit)
                     {
                         SetMessage(100 + digit, digit.ToString(), 220, Color.white);
+                        _audio.Play(FeedbackSound.Tick);
                     }
 
                     break;
@@ -550,7 +611,7 @@ namespace HandSeals.Game
                     int tenths = Mathf.CeilToInt((float)(session.TimeLeft * 10.0));
                     if (tenths != _timerKey)
                     {
-                        SetTimer(tenths, (tenths / 10f).ToString("0.0") + " s", session.TimeLeft < 3.0 ? BadColor : Color.white);
+                        SetTimer(tenths, UiFormat.Seconds(tenths / 10.0), session.TimeLeft < 3.0 ? BadColor : Color.white);
                     }
 
                     if (state == SessionState.Paused)
@@ -573,7 +634,7 @@ namespace HandSeals.Game
                     {
                         SetMessage(
                             3,
-                            jutsu.Name + "!\n<size=56>+" + session.LastScore + "  ·  " + _game.LastTime.ToString("0.0") + " s"
+                            jutsu.Name + "!\n<size=56>+" + session.LastScore + "  ·  " + UiFormat.Seconds(_game.LastTime)
                             + (_game.LastWasRecord ? "  ·  new best" : string.Empty)
                             + (session.Combo > 1 ? "\ncombo x" + session.Combo : string.Empty) + "</size>",
                             88,
@@ -671,7 +732,7 @@ namespace HandSeals.Game
                 _builder.Append("  ·  mistakes ").Append(training.Mistakes);
                 if (training.CorrectCount > 0)
                 {
-                    _builder.Append("  ·  fastest ").Append(training.BestSeconds.ToString("0.0")).Append(" s");
+                    _builder.Append("  ·  fastest ").Append(UiFormat.Seconds(training.BestSeconds));
                 }
             }
             else if (_game.Session != null)
@@ -682,7 +743,57 @@ namespace HandSeals.Game
             _status.text = _builder.ToString();
         }
 
+        // ---------------------------------------------------------------- sound and effects
+
+        private void HandleJudged(SealType seal, MatchResult result)
+        {
+            if (result == MatchResult.Wrong)
+            {
+                _audio.Play(FeedbackSound.Wrong);
+            }
+            else if (result == MatchResult.Correct)
+            {
+                _audio.Play(FeedbackSound.Correct);
+
+                if (_game.Mode == GameMode.Training)
+                {
+                    // Over the top panel, where the seal to make is shown.
+                    _effects.Burst(new Vector2(0f, 700f), GoodColor, 14);
+                }
+            }
+
+            // A completed technique is celebrated in HandleChallengeEnded.
+        }
+
+        private void HandleChallengeEnded(bool completed)
+        {
+            if (completed)
+            {
+                _audio.Play(FeedbackSound.Complete);
+                _effects.Burst(new Vector2(0f, 60f), GoodColor, 36);
+                _effects.Flash(new Color(GoodColor.r, GoodColor.g, GoodColor.b, 0.3f));
+            }
+            else
+            {
+                _audio.Play(FeedbackSound.Fail);
+                _effects.Flash(new Color(BadColor.r, BadColor.g, BadColor.b, 0.3f));
+            }
+        }
+
         // ---------------------------------------------------------------- helpers
+
+        /// <summary>Hints only make sense while the player is expected to make a seal.</summary>
+        private bool HintsAllowed()
+        {
+            if (_game.Mode == GameMode.Training)
+            {
+                return true;
+            }
+
+            return _game.Mode == GameMode.Challenge
+                && _game.Session != null
+                && _game.Session.State == SessionState.WaitingForSeal;
+        }
 
         private string BuildSequence(Jutsu jutsu, GameSession session)
         {

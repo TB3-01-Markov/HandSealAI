@@ -7,7 +7,7 @@ Everything runs on the device. No server, no account, no network.
 
 ## Status
 
-Version 0.2:
+Version 0.3:
 
 - live recognition of 12 zodiac hand seals (plus two extra gestures) with a YOLOX-nano model running on Unity Sentis
 - a seal counts only after it is held for 0.4 s; short dropouts and one-frame misreads do not interrupt the hold
@@ -16,10 +16,16 @@ Version 0.2:
   mistakes and your fastest answer, and tells you which seal it saw when you got it wrong
 - **techniques**: five sequences against the clock with progress, score, combo and locally saved best times;
   play one on repeat or all of them in a row
-- game rules and model pre/post-processing in a Unity-free C# library covered by 115 unit tests
+- **settings**: confidence needed, hold time, sound, GPU or CPU, and a debug view of the model input;
+  saved on the phone
+- **feedback**: sounds for right and wrong seals, the countdown and the result, sparks and a screen flash
+  when a technique is completed; all sounds are synthesised in code, so the project ships no audio files
+- **hints** when nothing has been recognised for 3 seconds: show your hands, or hold the seal steadier
+- if the GPU backend fails on a phone, recognition switches to the CPU by itself
+- game rules, model pre/post-processing, settings and sound synthesis in a Unity-free C# library
+  covered by 147 unit tests
 
-Not there yet: reference cards with photos of the seals, visual effects, sound, a settings screen.
-See [Roadmap](#roadmap).
+Not there yet: reference cards with photos of the seals. See [Roadmap](#roadmap).
 
 ## How it works
 
@@ -68,18 +74,21 @@ project is switched to it.
 
 ## Tuning
 
-Select the **App** object in the scene; `AppRoot` exposes the settings:
+Players change these on the **Settings** screen in the menu; they are saved in `progress.json` in the
+app's data folder:
 
-| Setting | Default | Meaning |
-| --- | --- | --- |
-| Score Threshold | 0.3 | detections below this are discarded |
-| Confirm Score | 0.6 | a seal must reach this score to start the hold timer |
-| Hold Seconds | 0.4 | how long a seal must be held |
-| Countdown Seconds | 3 | pause before each technique |
-| Prefer Gpu | on | run the model with compute shaders when the device supports them |
-| Show Model Input | off | shows the 416 x 416 image exactly as the model receives it |
+| Setting | Default | Range | Meaning |
+| --- | --- | --- | --- |
+| Confidence needed | 60% | 30–90% | a seal must reach this score to start the hold timer |
+| Hold time | 0.4 s | 0.2–1.0 s | how long a seal must be held to count |
+| Sound | on | | effects for right and wrong seals |
+| Run the model on the GPU | on | | off = CPU; try it if recognition looks wrong on a phone |
+| Show model input | off | | the 416 x 416 image exactly as the model receives it |
 
-If recognition is poor on a particular phone, turn on **Show Model Input** first: the picture in the corner
+Developer defaults are on the `AppRoot` component of the **App** object: camera resolution, the decoder's
+score threshold (0.3) and the countdown (3 s).
+
+If recognition is poor on a particular phone, turn on **Show model input** first: the picture in the corner
 must be upright and not mirrored. The status line at the bottom shows the backend, inference time,
 camera resolution and rotation.
 
@@ -114,8 +123,6 @@ implementation on real photos: identical detections, input tensors within one gr
 ## Roadmap
 
 - reference cards with photos of every seal, shown in the training mode
-- effects and sound when a technique completes
-- settings screen (sensitivity, hold time, volume)
 - recording frames on the device to fine-tune the model on more hands and lighting
 - web leaderboard with an ASP.NET Core API
 

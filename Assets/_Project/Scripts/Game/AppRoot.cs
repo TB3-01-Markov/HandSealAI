@@ -1,10 +1,12 @@
+using HandSeals.Core;
 using UnityEngine;
 
 namespace HandSeals.Game
 {
     /// <summary>
-    /// Entry point of the app. Put this component on one object in the scene:
-    /// it creates the camera feed, the recognition, the game loop and the HUD and wires them together.
+    /// Entry point of the app. Put this component on one object in the scene: it loads the saved progress
+    /// and settings, creates the camera feed, recognition, sound, game flow and HUD, and wires them together.
+    /// Player-facing options live in the in-game settings screen; the fields here are developer defaults.
     /// </summary>
     public sealed class AppRoot : MonoBehaviour
     {
@@ -14,52 +16,51 @@ namespace HandSeals.Game
         [SerializeField] private int cameraFps = 30;
 
         [Header("Recognition")]
-        [Tooltip("Run the model on the GPU when the device supports compute shaders.")]
-        [SerializeField] private bool preferGpu = true;
-
         [Tooltip("Detections below this score are discarded by the decoder.")]
         [Range(0.05f, 0.9f)]
         [SerializeField] private float scoreThreshold = 0.3f;
 
-        [Tooltip("A seal must reach this score to start the hold timer.")]
-        [Range(0.1f, 0.95f)]
-        [SerializeField] private float confirmScore = 0.6f;
-
-        [Tooltip("How long a seal must be held before it counts, in seconds.")]
-        [Range(0f, 2f)]
-        [SerializeField] private float holdSeconds = 0.4f;
-
         [Header("Game")]
         [Range(0f, 5f)]
         [SerializeField] private float countdownSeconds = 3f;
-
-        [Header("Debug")]
-        [Tooltip("Show the 416 x 416 image exactly as the model receives it. Useful for checking camera orientation.")]
-        [SerializeField] private bool showModelInput;
 
         private void Awake()
         {
             Application.targetFrameRate = 60;
             Screen.sleepTimeout = SleepTimeout.NeverSleep;
 
+            var repository = new JsonProgressRepository();
+            PlayerProgress progress = repository.Load();
+            GameSettings settings = progress.Settings;
+
             var cameraFeed = gameObject.AddComponent<CameraFeed>();
             cameraFeed.RequestedWidth = cameraWidth;
             cameraFeed.RequestedHeight = cameraHeight;
             cameraFeed.RequestedFps = cameraFps;
 
+            var audioFeedback = gameObject.AddComponent<FeedbackAudio>();
+            audioFeedback.SoundOn = settings.SoundOn;
+
             var recognition = gameObject.AddComponent<RecognitionController>();
-            recognition.Initialize(cameraFeed, preferGpu, scoreThreshold, confirmScore, holdSeconds);
+            recognition.Initialize(cameraFeed, scoreThreshold, settings);
 
             var game = gameObject.AddComponent<GameController>();
             game.Initialize(
                 cameraFeed,
                 recognition,
                 () => JsonJutsuCatalog.LoadFromResources(),
-                new JsonProgressRepository(),
+                repository,
+                progress,
                 countdownSeconds);
 
+            game.SettingsChanged += changed =>
+            {
+                recognition.ApplySettings(changed);
+                audioFeedback.SoundOn = changed.SoundOn;
+            };
+
             var hud = gameObject.AddComponent<HudView>();
-            hud.Initialize(cameraFeed, recognition, game, showModelInput);
+            hud.Initialize(cameraFeed, recognition, game, audioFeedback);
         }
     }
 }

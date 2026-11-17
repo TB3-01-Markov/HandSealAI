@@ -17,6 +17,47 @@ namespace HandSeals.Core
     {
         public List<BestTime> BestTimes = new List<BestTime>();
 
+        public GameSettings Settings = new GameSettings();
+
+        /// <summary>Repairs data read from disk: missing lists and settings, invalid or duplicate records.</summary>
+        public void Normalize()
+        {
+            var cleaned = new List<BestTime>();
+            if (BestTimes != null)
+            {
+                foreach (BestTime entry in BestTimes)
+                {
+                    if (entry == null
+                        || string.IsNullOrEmpty(entry.JutsuId)
+                        || double.IsNaN(entry.Seconds)
+                        || double.IsInfinity(entry.Seconds)
+                        || entry.Seconds < 0)
+                    {
+                        continue;
+                    }
+
+                    BestTime existing = cleaned.Find(e => e.JutsuId == entry.JutsuId);
+                    if (existing == null)
+                    {
+                        cleaned.Add(new BestTime { JutsuId = entry.JutsuId, Seconds = entry.Seconds });
+                    }
+                    else if (entry.Seconds < existing.Seconds)
+                    {
+                        existing.Seconds = entry.Seconds;
+                    }
+                }
+            }
+
+            BestTimes = cleaned;
+
+            if (Settings == null)
+            {
+                Settings = new GameSettings();
+            }
+
+            Settings.Normalize();
+        }
+
         public bool TryGetBestTime(string jutsuId, out double seconds)
         {
             BestTime entry = Find(jutsuId);

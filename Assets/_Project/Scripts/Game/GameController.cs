@@ -7,7 +7,7 @@ namespace HandSeals.Game
 {
     public enum GameMode
     {
-        /// <summary>The main menu; recognition is paused.</summary>
+        /// <summary>The main menu (and the settings screen); recognition is paused.</summary>
         Menu = 0,
 
         /// <summary>Practising single seals without a timer.</summary>
@@ -18,8 +18,8 @@ namespace HandSeals.Game
     }
 
     /// <summary>
-    /// Owns the game flow: which mode is active, the training session and the technique session.
-    /// Confirmed seals from the recognition go to whichever mode is running.
+    /// Owns the game flow: which mode is active, the training session, the technique session,
+    /// the saved progress and settings. Confirmed seals from the recognition go to whichever mode is running.
     /// </summary>
     public sealed class GameController : MonoBehaviour
     {
@@ -44,6 +44,9 @@ namespace HandSeals.Game
         /// <summary>The running practice, or null outside the training mode.</summary>
         public TrainingSession Training { get; private set; }
 
+        /// <summary>The current settings. Change them through <see cref="ApplySettings"/>, not directly.</summary>
+        public GameSettings Settings => _progress.Settings;
+
         /// <summary>True when completing a technique moves on to the next one instead of repeating it.</summary>
         public bool PlayAll { get; private set; }
 
@@ -64,17 +67,27 @@ namespace HandSeals.Game
         /// <summary>Unscaled time of <see cref="LastMatch"/>.</summary>
         public double LastMatchTime { get; private set; } = double.NegativeInfinity;
 
+        /// <summary>Raised after the settings changed and were saved.</summary>
+        public event Action<GameSettings> SettingsChanged;
+
+        /// <summary>Raised for every confirmed seal that counted as right or wrong, in training and in techniques.</summary>
+        public event Action<SealType, MatchResult> Judged;
+
+        /// <summary>Raised when a technique ends: true when completed, false when the time ran out.</summary>
+        public event Action<bool> ChallengeEnded;
+
         public void Initialize(
             CameraFeed cameraFeed,
             RecognitionController recognition,
             Func<IJutsuCatalog> loadCatalog,
             IProgressRepository repository,
+            PlayerProgress progress,
             double countdownSeconds)
         {
             _camera = cameraFeed;
             _recognition = recognition;
             _repository = repository;
-            _progress = repository.Load();
+            _progress = progress ?? throw new ArgumentNullException(nameof(progress));
 
             try
             {
@@ -133,13 +146,29 @@ namespace HandSeals.Game
             if (Mode == GameMode.Training && Training != null)
             {
                 Training.Skip();
+                _recognition.ResetTracking();
             }
+        }
+
+        /// <summary>Validates, stores and saves new settings, then tells everyone who applies them.</summary>
+        public void ApplySettings(GameSettings settings)
+        {
+            if (settings == null)
+            {
+                throw new ArgumentNullException(nameof(settings));
+            }
+
+            GameSettings copy = settings.Clone();
+            copy.Normalize();
+            _progress.Settings = copy;
+            _repository.Save(_progress);
+            SettingsChanged?.Invoke(copy);
         }
 
         public bool TryGetBestTime(Jutsu jutsu, out double seconds)
         {
             seconds = 0;
-            return jutsu != null && _progress != null && _progress.TryGetBestTime(jutsu.Id, out seconds);
+            return jutsu != null && _progress.TryGetBestTime(jutsu.Id, out seconds);
         }
 
         private void SetMode(GameMode mode)
@@ -150,8 +179,8 @@ namespace HandSeals.Game
             LastMatchTime = double.NegativeInfinity;
 
             // A seal still held from the previous screen must not count on the new one.
-            _recognition.Stabilizer.Reset();
             _recognition.Paused = mode == GameMode.Menu;
+            _recognition.ResetTracking();
         }
 
         private void Update()
@@ -183,6 +212,7 @@ namespace HandSeals.Game
             {
                 case SessionState.Idle:
                     Session.Start(_jutsu[_index]);
+                    _recognition.ResetTracking();
                     break;
 
                 case SessionState.Paused:
@@ -200,7 +230,7 @@ namespace HandSeals.Game
                         }
 
                         // The player is probably still holding the last seal; it must not count for the next jutsu.
-                        _recognition.Stabilizer.Reset();
+                        _recognition.ResetTracking();
                         Session.Start(_jutsu[_index]);
                     }
 
@@ -261,6 +291,7 @@ namespace HandSeals.Game
             LastSeal = seal;
             LastMatch = result;
             LastMatchTime = Time.unscaledTimeAsDouble;
+            Judged?.Invoke(seal, result);
         }
 
         private void HandleStateChanged(SessionState state)
@@ -275,10 +306,12 @@ namespace HandSeals.Game
                 }
 
                 _resultTimeLeft = ResultSeconds;
+                ChallengeEnded?.Invoke(true);
             }
             else if (state == SessionState.Failed)
             {
                 _resultTimeLeft = ResultSeconds;
+                ChallengeEnded?.Invoke(false);
             }
         }
     }

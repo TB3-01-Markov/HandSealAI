@@ -38,6 +38,9 @@ namespace HandSeals.Recognition
 
         public BackendType Backend { get; }
 
+        /// <summary>True when the model runs on the GPU (so a CPU fallback is possible).</summary>
+        public bool UsesGpu => Backend != BackendType.CPU;
+
         /// <summary>True while an inference is in flight; only one can run at a time.</summary>
         public bool IsBusy { get; private set; }
 

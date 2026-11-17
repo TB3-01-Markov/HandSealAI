@@ -15,17 +15,16 @@ namespace HandSeals.Game
             _path = path ?? Path.Combine(Application.persistentDataPath, "progress.json");
         }
 
+        /// <summary>Loads and repairs the saved progress; never fails, a damaged file gives fresh progress.</summary>
         public PlayerProgress Load()
         {
+            PlayerProgress progress = null;
+
             try
             {
                 if (File.Exists(_path))
                 {
-                    PlayerProgress progress = JsonUtility.FromJson<PlayerProgress>(File.ReadAllText(_path));
-                    if (progress != null)
-                    {
-                        return progress;
-                    }
+                    progress = JsonUtility.FromJson<PlayerProgress>(File.ReadAllText(_path));
                 }
             }
             catch (Exception exception)
@@ -34,7 +33,13 @@ namespace HandSeals.Game
                 Debug.LogWarning($"Could not read progress from '{_path}': {exception.Message}");
             }
 
-            return new PlayerProgress();
+            if (progress == null)
+            {
+                progress = new PlayerProgress();
+            }
+
+            progress.Normalize();
+            return progress;
         }
 
         public void Save(PlayerProgress progress)

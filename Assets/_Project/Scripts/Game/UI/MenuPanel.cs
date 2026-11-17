@@ -54,7 +54,7 @@ namespace HandSeals.Game
             listTitle.text = "Or pick one technique to repeat:";
 
             // Scrollable list. The viewport clips the content and catches drags that start between the items.
-            RectTransform scrollRect = UiFactory.CreateRect("Techniques", root, new Vector2(0.06f, 0.03f), new Vector2(0.94f, 0.54f));
+            RectTransform scrollRect = UiFactory.CreateRect("Techniques", root, new Vector2(0.06f, 0.12f), new Vector2(0.94f, 0.54f));
             var scroll = scrollRect.gameObject.AddComponent<ScrollRect>();
 
             RectTransform viewport = UiFactory.CreateRect("Viewport", scrollRect, Vector2.zero, Vector2.one);
@@ -71,11 +71,18 @@ namespace HandSeals.Game
             scroll.vertical = true;
             scroll.movementType = ScrollRect.MovementType.Clamped;
             scroll.scrollSensitivity = 40f;
+
+            UiFactory.AddButton(
+                UiFactory.CreateRect("SettingsButton", root, new Vector2(0.06f, 0.03f), new Vector2(0.94f, 0.1f)),
+                "Settings", 46, TextAnchor.MiddleCenter, UiFactory.ButtonColor,
+                () => SettingsClicked?.Invoke());
         }
 
         public event Action TrainingClicked;
 
         public event Action PlayAllClicked;
+
+        public event Action SettingsClicked;
 
         /// <summary>Raised with the index of the tapped technique.</summary>
         public event Action<int> TechniqueClicked;
@@ -116,11 +123,11 @@ namespace HandSeals.Game
                 }
 
                 _builder.Append("</color></size>\n<size=30><color=#9E9E9E>")
-                    .Append(jutsu.TimeLimitSeconds.ToString("0")).Append(" s");
+                    .Append(UiFormat.Seconds(jutsu.TimeLimitSeconds));
 
                 if (game.TryGetBestTime(jutsu, out double best))
                 {
-                    _builder.Append("  ·  best ").Append(best.ToString("0.0")).Append(" s");
+                    _builder.Append("  ·  best ").Append(UiFormat.Seconds(best));
                 }
 
                 _builder.Append("</color></size>");
